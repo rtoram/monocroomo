@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Desenho à Mão Avançado</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        canvas {
+            border: 1px solid #000;
+            margin-top: 20px;
+            max-width: 100%;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            background-color: #007BFF;
+            color: white;
+            border: none;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        #upload, select, input[type="range"] {
+            margin: 10px;
+        }
+        label {
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Transforme sua Imagem em Desenho à Mão</h1>
+    <input type="file" id="upload" accept="image/*">
+    <br>
+    <canvas id="canvas"></canvas>
+    <br>
+    <select id="colorMode">
+        <option value="pencil">Lápis (5 Tons de Cinza)</option>
+        <option value="bluePen">Caneta Azul</option>
+        <option value="blackPen">Caneta Preta</option>
+        <option value="brown">Tons de Marrom</option>
+        <option value="watercolor">Aquarela</option>
+    </select>
+    <select id="effectMode">
+        <option value="edges">Bordas</option>
+        <option value="hatching">Hachuras</option>
+        <option value="stippling">Pontilhismo</option>
+    </select>
+    <br>
+    <label for="edgeThreshold">Espessura dos Traços:</label>
+    <input type="range" id="edgeThreshold" min="10" max="200" value="50">
+    <br>
+    <label for="paperTexture">Textura de Papel:</label>
+    <input type="checkbox" id="paperTexture" checked>
+    <br>
+    <button onclick="applyEffect()">Aplicar Efeito</button>
+    <button onclick="downloadImage('png')">Baixar PNG</button>
+    <button onclick="downloadImage('jpg')">Baixar JPG</button>
+    <button onclick="clearCanvas()">Deletar</button>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        let originalImage = new Image();
+        const paperTexture = new Image();
+        paperTexture.src = 'https://i.imgur.com/8wX9Z9D.png'; // Textura de papel (hospedada externamente)
+
+        // Carregar a imagem
+        document.getElementById('upload').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                originalImage.src = event.target.result;
+                originalImage.onload = function() {
+                    canvas.width = originalImage.width;
+                    canvas.height = originalImage.height;
+                    ctx.drawImage(originalImage, 0, 0);
+                };
+            };
+            reader.readAsDataURL(file);
+        });
+
+        // Função para aplicar o efeito
+        function applyEffect() {
+            if (!originalImage.src) {
+                alert("Por favor, carregue uma imagem primeiro!");
+                return;
+            }
+
+            ctx.drawImage(originalImage, 0, 0);
+            let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            let data = imageData.data;
+
+            // Converte para escala de cinza
+            let grayData = new Uint8ClampedArray(data.length / 4);
+            for (let i = 0; i < data.length; i += 4) {
+                let r = data[i];
+                let g = data[i + 1];
+                let b = data[i + 2];
+                grayData[i / 4] = 0.3 * r + 0.59 * g + 0.11 * b;
+            }
+
+            // Detecção de bordas (Sobel)
+            let edgeData = new Uint8ClampedArray(grayData.length);
+            for (let y = 1; y < canvas.height - 1; y++) {
+                for (let x = 1; x < canvas.width - 1; x++) {
+                    let i = y * canvas.width + x;
+                    let gx = (-grayData[(y - 1) * canvas.width + (x - 1)] + grayData[(y - 1) * canvas.width + (x + 1)]) +
+                             (-2 * grayData[y * canvas.width + (x - 1)] + 2 * grayData[y * canvas.width + (x + 1)]) +
+                             (-grayData[(y + 1) * canvas.width + (x - 1)] + grayData[(y + 1) * canvas.width + (x + 1)]);
+                    let gy = (-grayData[(y - 1) * canvas.width + (x - 1)] - 2 * grayData[(y - 1) * canvas.width + x] - grayData[(y - 1) * canvas.width + (x + 1)]) +
+                             (grayData[(y + 1) * canvas.width + (x - 1)] + 2 * grayData[(y + 1) * canvas.width + x] + grayData[(y + 1) * canvas.width + (x + 1)]);
+                    edgeData[i] = Math.min(Math.sqrt(gx * gx + gy * gy), 255);
+                }
+            }
+
+            // Modos de efeito
+            let effectMode = document.getElementById('effectMode').value;
+            let colorMode = document.getElementById('colorMode').value;
+            let threshold = parseInt(document.getElementById('edgeThreshold').value);
+
+            for (let i = 0; i < data.length; i += 4) {
+                let edgeValue = edgeData[i / 4];
+                let x = (i / 4) % canvas.width;
+                let y = Math.floor((i / 4) / canvas.width);
+
+                if (effectMode === 'edges') {
+                    applyColorMode(edgeValue, threshold, data, i, colorMode);
+                } else if (effectMode === 'hatching') {
+                    if (edgeValue > threshold && (x + y) % 10 < 2) {
+                        applyColorMode(edgeValue, threshold, data, i, colorMode);
+                    } else {
+                        data[i] = data[i + 1] = data[i + 2] = 255;
+                    }
+                } else if (effectMode === 'stippling') {
+                    if (edgeValue > threshold && Math.random() * 255 < edgeValue) {
+                        applyColorMode(edgeValue, threshold, data, i, colorMode);
+                    } else {
+                        data[i] = data[i + 1] = data[i + 2] = 255;
+                    }
+                }
+                data[i + 3] = 255;
+            }
+
+            ctx.putImageData(imageData, 0, 0);
+
+            // Aplicar textura de papel
+            if (document.getElementById('paperTexture').checked && paperTexture.complete) {
+                ctx.globalAlpha = 0.2; // Transparência da textura
+                ctx.drawImage(paperTexture, 0, 0, canvas.width, canvas.height);
+                ctx.globalAlpha = 1.0;
+            }
+        }
+
+        // Função auxiliar para aplicar paleta de cores
+        function applyColorMode(edgeValue, threshold, data, i, colorMode) {
+            if (colorMode === 'pencil') {
+                if (edgeValue > 200) { data[i] = data[i + 1] = data[i + 2] = 50; }
+                else if (edgeValue > 150) { data[i] = data[i + 1] = data[i + 2] = 100; }
+                else if (edgeValue > 100) { data[i] = data[i + 1] = data[i + 2] = 150; }
+                else if (edgeValue > threshold) { data[i] = data[i + 1] = data[i + 2] = 200; }
+                else { data[i] = data[i + 1] = data[i + 2] = 255; }
+            } else if (colorMode === 'bluePen') {
+                if (edgeValue > threshold) { data[i] = 0; data[i + 1] = 0; data[i + 2] = 255; }
+                else { data[i] = data[i + 1] = data[i + 2] = 255; }
+            } else if (colorMode === 'blackPen') {
+                if (edgeValue > threshold) { data[i] = data[i + 1] = data[i + 2] = 0; }
+                else { data[i] = data[i + 1] = data[i + 2] = 255; }
+            } else if (colorMode === 'brown') {
+                if (edgeValue > 200) { data[i] = 139; data[i + 1] = 69; data[i + 2] = 19; }
+                else if (edgeValue > 150) { data[i] = 165; data[i + 1] = 42; data[i + 2] = 42; }
+                else if (edgeValue > 100) { data[i] = 205; data[i + 1] = 133; data[i + 2] = 63; }
+                else if (edgeValue > threshold) { data[i] = 245; data[i + 1] = 222; data[i + 2] = 179; }
+                else { data[i] = data[i + 1] = data[i + 2] = 255; }
+            } else if (colorMode === 'watercolor') {
+                if (edgeValue > 200) { data[i] = 0; data[i + 1] = 0; data[i + 2] = 139; } // Azul escuro
+                else if (edgeValue > 150) { data[i] = 0; data[i + 1] = 191; data[i + 2] = 255; } // Azul médio
+                else if (edgeValue > threshold) { data[i] = 135; data[i + 1] = 206; data[i + 2] = 235; } // Azul claro
+                else { data[i] = data[i + 1] = data[i + 2] = 255; }
+            }
+        }
+
+        // Função para baixar a imagem
+        function downloadImage(format) {
+            if (!canvas.width || !canvas.height) {
+                alert("Nenhuma imagem para baixar!");
+                return;
+            }
+            const link = document.createElement('a');
+            link.download = `desenho_a_mao.${format}`;
+            link.href = canvas.toDataURL(`image/${format}`);
+            link.click();
+        }
+
+        // Função para limpar o canvas
+        function clearCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            canvas.width = 0;
+            canvas.height = 0;
+            originalImage.src = '';
+            document.getElementById('upload').value = '';
+        }
+    </script>
+</body>
+</html>
